@@ -1,0 +1,1607 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml.Linq;
+using Xbim.Common;
+using Xbim.Common.Step21;
+using Xbim.Ifc;
+using Xbim.Ifc4.GeometricConstraintResource;
+using Xbim.Ifc4.GeometricModelResource;
+using Xbim.Ifc4.GeometryResource;
+using Xbim.Ifc4.Interfaces;
+using Xbim.Ifc4.Kernel;
+using Xbim.Ifc4.MaterialResource;
+using Xbim.Ifc4.MeasureResource;
+using Xbim.Ifc4.ProductExtension;
+using Xbim.Ifc4.ProfileResource;
+using Xbim.Ifc4.PropertyResource;
+using Xbim.Ifc4.RepresentationResource;
+using Xbim.Ifc4.SharedBldgElements;
+using Xbim.ModelGeometry.Scene;
+
+namespace ConsoleApplication1
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            //ReadIfcxml("0912102-01beam_profile_para_ac_1.ifc.ifcxml");
+            //or
+           CreateModel();  
+        }
+
+
+        public static void CreateModel()
+        {
+            double columnOverallDepth = 300;
+            double columnOverallWidth = 200;
+            double columnWebThickness = 15;
+            double columnFlangeThickness = 30;
+            double columnFilletRadius = 10;
+
+            double beamOverallDepth = 300;
+            double beamOverallWidth = 200;
+            double beamWebThickness = 15;
+            double beamFlangeThickness = 30;
+            double beamFilletRadius = 10;
+
+
+            double SecondarybeamOverallDepth = 200;
+            double SecondarybeamOverallWidth = 100;
+            double SecondarybeamWebThickness = 20;
+            double SecondarybeamFlangeThickness = 20;
+            double SecondarybeamFilletRadius = 10;
+
+            double Spacing = 4000;
+            double Span = 13000;
+            double totalLanLengthInyDir = 8000;
+            double ColumnHeight = 9000;
+            int numberOfFrames = (int)(totalLanLengthInyDir / Spacing) + 1;
+
+
+            //xDim must equal yDim
+            double footingxDim = 2000;
+            double footingyDim = 2000;
+            double footingDepth = 800;
+
+            int RoofPurlinSpacing = 3000;
+            int sideGirtsSpacing = 3000;
+
+
+
+            IfcStore model = IfcStore.Create(new XbimEditorCredentials
+            {
+                ApplicationDevelopersName =
+                "ahmed",
+                ApplicationFullName = "app1",
+                EditorsOrganisationName = "IStell"
+            }, IfcSchemaVersion.Ifc4, XbimStoreType.InMemoryModel);
+
+            IfcUnitAssignment UnitAssignment = InitializeUnits(model);
+
+            //essentials 
+            IfcDirection xDir;
+            IfcDirection yDir;
+            IfcDirection zDir;
+            IfcCartesianPoint Origin;
+            IfcDirection trueNorthDir;
+            IfcAxis2Placement3D Axis2Placement3DOfOrigin;
+            IfcGeometricRepresentationContext GeometricRepresentationContext;
+            IfcGeometricRepresentationContext SketchGeometricRepresentationContext;
+            List<IfcBuildingElement> columnAndBeams = new List<IfcBuildingElement>();
+            List<IfcBuildingElement> AllElements = new List<IfcBuildingElement>();
+            List<IfcSlab> Slabs = new List<IfcSlab>();
+
+            IfcDirection SideGirtsOntheRightRefDir;
+            IfcDirection SideGirtsOntheLeftRefDir;
+
+
+            using (var tr = model.BeginTransaction(""))
+            {
+                //Deifne x ,y , z 
+                xDir = model.Instances.New<IfcDirection>(d => d.SetXYZ(1, 0, 0));
+                yDir = model.Instances.New<IfcDirection>(d => d.SetXYZ(0, 1, 0));
+                zDir = model.Instances.New<IfcDirection>(d => d.SetXYZ(0, 0, 1));
+
+
+                //Define Origin 
+                Origin = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(0, 0, 0));
+
+                //Define true north  i47
+                trueNorthDir = model.Instances.New<IfcDirection>(d => d.SetXY(6.1230318E-17, 1));
+
+                //Define OriginPlacement in the model 
+                Axis2Placement3DOfOrigin = model.Instances.New<IfcAxis2Placement3D>(c =>
+                {
+                    c.Location = Origin;
+                    c.Axis = zDir;
+                    c.RefDirection = xDir;
+                });
+
+
+                //Define IfcGeometricRepresentationContext
+                GeometricRepresentationContext = model.Instances.New<IfcGeometricRepresentationContext>(c =>
+                {
+                    c.ContextIdentifier = new IfcLabel("Plan");
+                    c.ContextType = new IfcLabel("Design");
+                    c.WorldCoordinateSystem = Axis2Placement3DOfOrigin;
+                    c.Precision = new IfcReal(1E-05);
+                    c.TrueNorth = trueNorthDir;
+                    c.CoordinateSpaceDimension = 3;
+                });
+
+                //Define   another IfcGeometricRepresentationContext
+                SketchGeometricRepresentationContext = model.Instances.New<IfcGeometricRepresentationContext>(c =>
+                {
+                    c.ContextIdentifier = new IfcLabel("Plan");
+                    c.ContextType = new IfcLabel("Sketch");
+                    c.WorldCoordinateSystem = Axis2Placement3DOfOrigin;
+                    c.Precision = new IfcReal(1E-05);
+                    c.TrueNorth = trueNorthDir;
+                    c.CoordinateSpaceDimension = 3;
+                });
+
+                SideGirtsOntheRightRefDir = xDir;
+                SideGirtsOntheLeftRefDir = model.Instances.New<IfcDirection>(s=>s.SetXYZ(-1,0,0));
+
+
+                tr.Commit();
+            }
+
+
+            IfcProject Project = CreateProject(model, SketchGeometricRepresentationContext, GeometricRepresentationContext, UnitAssignment, Axis2Placement3DOfOrigin);
+
+            List<long> longitudes = new List<long>();
+            longitudes.Add(54);
+            longitudes.Add(25);
+            longitudes.Add(0);
+            List<long> latitudes = new List<long>();
+            latitudes.Add(24);
+            latitudes.Add(28);
+            latitudes.Add(0);
+
+
+            IfcSite Site = CreateSite(model, Axis2Placement3DOfOrigin, longitudes, latitudes);
+            IfcBuilding Building = CreateBuilding(model, Site, Axis2Placement3DOfOrigin);
+
+            //Create Building Story 
+            IfcBuildingStorey BuildingStorey = CreateBuildingStorey(model, Building,
+             Origin, xDir, zDir);
+
+            for (int i = 0; i < numberOfFrames; i++)
+            {
+                IfcColumn col1 = CraeteColumn(model, string.Format("column {0}", i + 1), 0, 0 + i * Spacing, 0,
+                    ColumnHeight, columnOverallDepth, columnOverallWidth, columnWebThickness,
+                    columnFlangeThickness, columnFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin);
+                columnAndBeams.Add(col1);
+                AllElements.Add(col1);
+            }
+            for (int i = 0; i < numberOfFrames; i++)
+            {
+                IfcColumn col2 = CraeteColumn(model, string.Format("column {0}", i + 5),
+                    -Span, 0 + i * Spacing, 0, ColumnHeight, columnOverallDepth, columnOverallWidth,
+                    columnWebThickness, columnFlangeThickness, columnFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin);
+                columnAndBeams.Add(col2);
+                AllElements.Add(col2);
+
+            }
+
+            for (int i = 0; i < numberOfFrames; i++)
+            {
+                IfcBeam b = CraeteMainGirder(model, string.Format("beam {0}", i + 1), -Span + columnOverallDepth / 2, 0 + Spacing * i, ColumnHeight - beamOverallDepth / 2, Span, columnOverallDepth, beamOverallDepth,
+                    beamOverallWidth, beamWebThickness, beamFlangeThickness, beamFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin);
+                columnAndBeams.Add(b);
+                AllElements.Add(b);
+
+            }
+
+
+
+            //Create Side Girts on Right Side
+            int numberOfSideGirts = (int)ColumnHeight / sideGirtsSpacing;
+
+            for (int i = 0; i < (numberOfFrames - 1); i++)
+            {
+                for (int j = numberOfSideGirts; j > 0; j--)
+                {
+                    IfcBeam b1;
+                     if (j == numberOfSideGirts)
+                    {
+                        b1 = CraeteSecondaryBeamCCHannel(model, string.Format("beam {0}", 1),
+                        0 , 0 + i * Spacing, j * (ColumnHeight + SecondarybeamOverallDepth / 2) / numberOfSideGirts, Spacing,
+                        SecondarybeamOverallDepth, SecondarybeamOverallWidth, SecondarybeamWebThickness,
+                        SecondarybeamFlangeThickness, SecondarybeamFilletRadius, BuildingStorey, Project, 
+                        xDir, yDir, zDir, Origin , SideGirtsOntheRightRefDir);
+
+                    }
+                    else
+                    {
+                    b1 = CraeteSecondaryBeamCCHannel(model, string.Format("beam {0}", 1),
+                        0+columnOverallDepth/2 + SecondarybeamOverallWidth/2, 0 + i * Spacing, j * (ColumnHeight + SecondarybeamOverallDepth / 2) / numberOfSideGirts, Spacing,
+                        SecondarybeamOverallDepth, SecondarybeamOverallWidth, SecondarybeamWebThickness,
+                        SecondarybeamFlangeThickness, SecondarybeamFilletRadius, BuildingStorey, Project, 
+                        xDir, yDir, zDir, Origin, SideGirtsOntheRightRefDir);
+
+
+                    }
+                    columnAndBeams.Add(b1);
+
+                    AllElements.Add(b1);
+
+                }
+            }
+
+
+            //Create Side Girts on Left Side
+            for (int i = 0; i < (numberOfFrames - 1); i++)
+            {
+                IfcBeam b1; 
+                for (int j = numberOfSideGirts; j > 0; j--)
+                {
+                   if(j == numberOfSideGirts)
+                    {
+                        b1 = CraeteSecondaryBeamCCHannel(model, string.Format("beam {0}", 1),
+                        0 - Span, 0 + i * Spacing, j * (ColumnHeight + SecondarybeamOverallDepth / 2) / numberOfSideGirts, Spacing,
+                        SecondarybeamOverallDepth, SecondarybeamOverallWidth, SecondarybeamWebThickness,
+                        SecondarybeamFlangeThickness, SecondarybeamFilletRadius, BuildingStorey, 
+                        Project, xDir, yDir, zDir, Origin , SideGirtsOntheLeftRefDir);
+                       
+                    }
+                    else
+                    {
+                     b1 = CraeteSecondaryBeamCCHannel(model, string.Format("beam {0}", 1),
+                        0 - Span - columnOverallDepth/2 - SecondarybeamOverallWidth/2, 0 + i * Spacing, j * (ColumnHeight + SecondarybeamOverallDepth / 2) / numberOfSideGirts, Spacing,
+                        SecondarybeamOverallDepth, SecondarybeamOverallWidth, SecondarybeamWebThickness,
+                        SecondarybeamFlangeThickness, SecondarybeamFilletRadius, BuildingStorey, Project,
+                        xDir, yDir, zDir, Origin , SideGirtsOntheLeftRefDir);
+                    
+                    }
+                    columnAndBeams.Add(b1);
+                    AllElements.Add(b1);
+
+
+                }
+            }
+
+            //Create  Roof Burlins
+
+            int numberOfRoofBurlin = (int)Span / (RoofPurlinSpacing);
+            for (int i = 0; i < numberOfFrames - 1; i++)
+            {
+                for (int j = numberOfRoofBurlin; j > 0; j--)
+                {
+                    IfcBeam b1 = CraeteSecondaryBeamCCHannel(model, string.Format("beam {0}", 1), -j * Span / numberOfRoofBurlin, 0 + i * Spacing, (ColumnHeight + SecondarybeamOverallDepth / 2), Spacing, SecondarybeamOverallDepth, 
+                        SecondarybeamOverallWidth, SecondarybeamWebThickness, SecondarybeamFlangeThickness, 
+                        SecondarybeamFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin ,xDir);
+                    columnAndBeams.Add(b1);
+                    AllElements.Add(b1);
+
+                }
+            }
+
+            //Create Slabs 
+            for (int i = 0; i < numberOfFrames; i++)
+            {
+                IfcSlab s = CreateSlab(model, string.Format("slab {0}", i + 1),
+                    0-footingxDim/2, 0+i*Spacing +footingyDim/2, -footingDepth,
+                    footingxDim, footingyDim, footingDepth, BuildingStorey, Project, Origin, xDir, yDir, zDir);
+                Slabs.Add(s);
+                AllElements.Add(s);
+
+                IfcSlab s1 = CreateSlab(model, string.Format("slab {0}", i + 1),
+                   0 -Span- footingxDim / 2, 0 + i * Spacing + footingyDim / 2, -footingDepth,
+                   footingxDim, footingyDim, footingDepth, BuildingStorey, Project, Origin, xDir, yDir, zDir);
+                Slabs.Add(s1);
+                AllElements.Add(s1);
+            }
+
+
+            //Create Inclined Side Bracing
+            //theta in radian  
+            double theata = Math.Atan2(sideGirtsSpacing , Spacing);
+            // bracing length = sqrt(spacing ^2  + sideGirtsSpacing^2)
+            double bracingLength = Math.Sqrt(Math.Pow(Spacing, 2) + Math.Pow(sideGirtsSpacing, 2));
+            double CosTheta = Math.Cos(theata);
+            double SinTheta = Math.Sin(theata);
+
+            //for inclined bracing 
+            IfcDirection Axis1;
+
+            IfcDirection Axis2;
+
+
+            //for beams 1 ,2 
+            //ref = x
+            //axis 0 costheta sintheta
+            //extrude try z 
+            using (var tr = model.BeginTransaction(""))
+            {
+                Axis1 = model.Instances.New<IfcDirection>(d=>d.SetXYZ(0 ,CosTheta,SinTheta));
+                Axis2 = model.Instances.New<IfcDirection>(d=>d.SetXYZ(0 ,CosTheta,-SinTheta));
+                tr.Commit();
+            }
+
+
+
+            //Create sides cross parcing 
+
+            double SideIclinedBracingOverAllDepth = 100;
+            double SideIclinedBracingOverAllWidth = 100;
+            double SideIclinedBracingFlangeThickness = 10;
+            double SideIclinedBracingWebThickness = 10;
+            double SideIclinedBracingFilletRadius = 5;
+
+            for (int i = 0; i < numberOfFrames-1; i++)
+            {
+                for (int j = 0; j < numberOfSideGirts; j++)
+                {
+                    //for i beam use  CraeteInclinedSideBracing
+                    //for angle  use  CraeteInclinedSideBracingAngles
+
+
+                    IfcBeam inclinedb1 = CraeteInclinedSideBracingAngles(model, "b1", 0, 0+i*Spacing, j*sideGirtsSpacing,
+                    bracingLength, SideIclinedBracingOverAllDepth, SideIclinedBracingOverAllWidth,
+                    SideIclinedBracingFlangeThickness, SideIclinedBracingWebThickness, 
+                    SideIclinedBracingFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin, Axis1);
+                    columnAndBeams.Add(inclinedb1);
+                    AllElements.Add(inclinedb1);
+                    //for i beam use CraeteInclinedSideBracing
+                    //for angles use  CraeteInclinedSideBracingAngles
+                    IfcBeam inclinedb2 = CraeteInclinedSideBracingAngles(model, "b1", -Span, 0+i*Spacing, j * sideGirtsSpacing,
+                    bracingLength, SideIclinedBracingOverAllDepth, SideIclinedBracingOverAllWidth,
+                    SideIclinedBracingFlangeThickness, SideIclinedBracingWebThickness,
+                    SideIclinedBracingFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin, Axis1);
+               
+                }
+                for (int m = numberOfSideGirts; m > 0; m--)
+                {
+                    IfcBeam inclinedb7 = CraeteInclinedSideBracingAngles(model, "b1", 0, 0 + i * Spacing, m * (ColumnHeight - beamOverallDepth) / numberOfSideGirts,
+                      bracingLength, SideIclinedBracingOverAllDepth, SideIclinedBracingOverAllWidth,
+                    SideIclinedBracingFlangeThickness, SideIclinedBracingWebThickness,
+                    SideIclinedBracingFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin, Axis2);
+                    columnAndBeams.Add(inclinedb7);
+                    AllElements.Add(inclinedb7);
+
+                    IfcBeam inclinedb8 = CraeteInclinedSideBracingAngles(model, "b1", -Span, 0 + i * Spacing, m * (ColumnHeight - beamOverallDepth) / numberOfSideGirts,
+                      bracingLength, SideIclinedBracingOverAllDepth, SideIclinedBracingOverAllWidth,
+                    SideIclinedBracingFlangeThickness, SideIclinedBracingWebThickness,
+                    SideIclinedBracingFilletRadius, BuildingStorey, Project, xDir, yDir, zDir, Origin, Axis2);
+                    columnAndBeams.Add(inclinedb8);
+                    AllElements.Add(inclinedb8);
+                }
+            }
+
+
+
+            //roof bracing 
+            double RoofInclinedBracingSpan = Math.Sqrt(Math.Pow(RoofPurlinSpacing, 2) + Math.Pow(Spacing, 2));
+            double RoofIclinedBracingOverAllDepth = 100;
+            double RoofIclinedBracingOverAllWidth = 100;
+            double RoofIclinedBracingFlangeThickness = 10;
+            double RoofIclinedBracingWebThickness = 10;
+            double RoofIclinedBracingFilletRadius = 5;
+
+            IfcDirection Axis3;
+            IfcDirection Axis4;
+            double theta2 = Math.Atan2(Spacing, RoofPurlinSpacing);
+            double Costheta2 = Math.Cos(theta2);
+            double SinTheta2 = Math.Sin(theta2);
+
+            using (var tr = model.BeginTransaction(""))
+            {
+                Axis3 = model.Instances.New<IfcDirection>(d=>d.SetXYZ(-Costheta2,SinTheta2,0));
+                Axis4 = model.Instances.New<IfcDirection>(d => d.SetXYZ(Costheta2, SinTheta2, 0));
+                tr.Commit();
+            }
+
+            for (int i = 0; i < numberOfFrames-1; i++)
+            {
+                for (int j = 0; j < numberOfRoofBurlin; j++)
+                {
+                IfcBeam beam = CraeteInclinedSRoofBracingAngles(model, "", 0-j*(RoofPurlinSpacing)-(columnOverallDepth/2), 0+i*Spacing, ColumnHeight- RoofIclinedBracingOverAllDepth/2, RoofInclinedBracingSpan,
+                    RoofIclinedBracingOverAllDepth, RoofIclinedBracingOverAllWidth, RoofIclinedBracingWebThickness, RoofIclinedBracingFlangeThickness, RoofIclinedBracingFilletRadius,
+                    BuildingStorey, Project, xDir, yDir, zDir, Origin,Axis3);
+                    columnAndBeams.Add(beam);
+                    AllElements.Add(beam);
+
+                }
+
+                for (int m = numberOfRoofBurlin; m > 0; m--)
+                {
+
+                  IfcBeam beam = CraeteInclinedSRoofBracingAngles(model, "", 0 - m * (RoofPurlinSpacing) - (columnOverallDepth / 2), 0 + i * Spacing, ColumnHeight - RoofIclinedBracingOverAllDepth / 2, RoofInclinedBracingSpan,
+                  RoofIclinedBracingOverAllDepth, RoofIclinedBracingOverAllWidth, RoofIclinedBracingWebThickness, RoofIclinedBracingFlangeThickness, RoofIclinedBracingFilletRadius,
+                  BuildingStorey, Project, xDir, yDir, zDir, Origin, Axis4);
+                    columnAndBeams.Add(beam);
+                    AllElements.Add(beam);
+                }
+            }
+
+
+          
+
+          
+
+            AssignMaterialToSlabs(model, Slabs, xDir, zDir, Origin);
+            CreateAndAssignMaterialForColumnsAndBeams(columnAndBeams, model);
+            AssignIfcRelContainedInSpatialStructureForBuildingElement(model, AllElements, BuildingStorey, Building, Site, Project);
+
+
+            model.SaveAs("myModel.ifc");
+            CreateWexBimFile("myModel.ifc");
+            LaunchNotepad("myModel.ifc");
+
+        }
+
+  public static IfcBeam CraeteInclinedSideBracing(IfcStore model,
+string name, double x, double y, double z, double span,
+double OverallDepth, double OverallWidth, double WebThickness,
+double FlangeThickness, double FilletRadius,
+IfcBuildingStorey BuildingStorey,
+IfcProject project, IfcDirection xDir, IfcDirection yDir,
+IfcDirection zDir, IfcCartesianPoint Origin, IfcDirection Axis)
+        {
+            IfcBeam result;
+            using (var tr = model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            //hence it's created in yz plan  
+                            t.Axis = zDir;
+                            //y to x
+                             //y to x 
+                            t.RefDirection = xDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+
+                                    d.Axis = Axis;
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span;
+                                e.SweptArea = model.Instances.New<IfcIShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        //changed from 0 0
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0, 0));
+                                    });
+                                    s.OverallDepth = OverallDepth;
+                                    s.OverallWidth = OverallWidth;
+                                    s.WebThickness = WebThickness;
+                                    s.FlangeThickness = FlangeThickness;
+                                    s.FilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+
+        public static IfcBeam CraeteInclinedSideBracingAngles(IfcStore model,
+string name, double x, double y, double z, double span,
+double OverallDepth, double OverallWidth, double WebThickness,
+double EdgeRadius, double FilletRadius,
+IfcBuildingStorey BuildingStorey,
+IfcProject project, IfcDirection xDir, IfcDirection yDir,
+IfcDirection zDir, IfcCartesianPoint Origin, IfcDirection Axis)
+        {
+            IfcBeam result;
+            using (var tr = model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            //hence it's created in yz plan  
+                            t.Axis = zDir;
+                            //y to x
+                            //y to x 
+                            t.RefDirection = xDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+
+                                    d.Axis = Axis;
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span;
+                                e.SweptArea = model.Instances.New<IfcLShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        //changed from 0 0
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0, 0));
+                                    });
+                                    s.Depth = OverallDepth;
+                                    s.Width = OverallWidth;
+                                    s.Thickness = WebThickness;
+                                    s.EdgeRadius = EdgeRadius;
+                                    s.FilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+
+
+        public static IfcBeam CraeteInclinedSRoofBracingAngles(IfcStore model,
+string name, double x, double y, double z, double span,
+double OverallDepth, double OverallWidth, double WebThickness,
+double EdgeRadius, double FilletRadius,
+IfcBuildingStorey BuildingStorey,
+IfcProject project, IfcDirection xDir, IfcDirection yDir,
+IfcDirection zDir, IfcCartesianPoint Origin, IfcDirection Axis)
+        {
+            IfcBeam result;
+            using (var tr = model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            //hence it's created in yz plan  
+                            t.Axis = zDir;
+                            //y to x
+                            //y to x 
+                            t.RefDirection = xDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+
+                                    d.Axis = Axis;
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span;
+                                e.SweptArea = model.Instances.New<IfcLShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        //changed from 0 0
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0, 0));
+                                    });
+                                    s.Depth = OverallDepth;
+                                    s.Width = OverallWidth;
+                                    s.Thickness = WebThickness;
+                                    s.FilletRadius = FilletRadius;
+                                    s.EdgeRadius = EdgeRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+
+        public static void ReadIfcxml(string filename)
+        {
+            string newFileName = "";
+           
+            XDocument root = XDocument.Load(filename);
+            var info = root.Descendants();
+            using (var model = IfcStore.Open(filename))
+            {
+                newFileName = "STEEL.ifc";
+                model.SaveAs(newFileName);
+               
+            }
+            LaunchNotepad(newFileName);
+        }
+       
+        public static void CreateIfcxml(string filename)
+        {
+            using (var tr = IfcStore.Open(filename))
+            {
+                tr.SaveAs(string.Format("{0}", filename + ".ifcxml"));
+                tr.SaveAs(string.Format("{0}", filename +".ifc" ));
+            }
+        }
+        
+
+
+        public static void CreateWexBimFile(string filename)
+        {
+            string fileName = filename;
+            using (var model = IfcStore.Open(fileName))
+            {
+                var context = new Xbim3DModelContext(model);
+                context.CreateContext();
+
+                var wexBimFilename = Path.ChangeExtension(fileName, "wexbim");
+                using (var wexBimFile = File.Create(wexBimFilename))
+                {
+                    using (var wexBimBinaryWriter = new BinaryWriter(wexBimFile))
+                    {
+                        model.SaveAsWexBim(wexBimBinaryWriter);
+                        wexBimBinaryWriter.Close();
+                    }
+                    wexBimFile.Close();
+                }
+            }
+
+        }
+
+
+        private static void LaunchNotepad(string fileName)
+        {
+            Process p;
+            try
+            {
+
+                p = new Process { StartInfo = { FileName = fileName, CreateNoWindow = false } };
+                p.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception Occurred :{0},{1}",
+                          ex.Message, ex.StackTrace);
+            }
+        }
+
+        public static IfcUnitAssignment InitializeUnits(IfcStore model)
+        {  //2- assing units to model
+            using (var tr = model.BeginTransaction("Initialize Units"))
+            {
+
+                //Define basic 9 uints length , area ,volume , anngles (solid , palne ) , thermal ,  intensity 
+                IfcSIUnit AreaUnit = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.SQUARE_METRE; c.UnitType = IfcUnitEnum.AREAUNIT; });
+                IfcSIUnit LenghtUnit = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.METRE; c.UnitType = IfcUnitEnum.LENGTHUNIT; c.Prefix = IfcSIPrefix.MILLI; });
+                IfcSIUnit VolumeUnit = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.CUBIC_METRE; c.UnitType = IfcUnitEnum.VOLUMEUNIT; });
+                IfcSIUnit solidangleunit = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.STERADIAN; c.UnitType = IfcUnitEnum.SOLIDANGLEUNIT; });
+                IfcSIUnit planeangleunit = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.RADIAN; c.UnitType = IfcUnitEnum.PLANEANGLEUNIT; });
+                IfcSIUnit mass = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.GRAM; c.UnitType = IfcUnitEnum.MASSUNIT; });
+                IfcSIUnit time = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.SECOND; c.UnitType = IfcUnitEnum.TIMEUNIT; });
+                IfcSIUnit thermo = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.DEGREE_CELSIUS; c.UnitType = IfcUnitEnum.THERMODYNAMICTEMPERATUREUNIT; });
+                IfcSIUnit lamin = model.Instances.New<IfcSIUnit>(c => { c.Name = IfcSIUnitName.LUMEN; c.UnitType = IfcUnitEnum.LUMINOUSINTENSITYUNIT; });
+
+
+
+
+                //define MeasureWithUnit 
+                IfcMeasureWithUnit MeasureWithUnit = model.Instances.New<IfcMeasureWithUnit>(c =>
+                {
+                    c.ValueComponent = new IfcPlaneAngleMeasure(0.017453293);
+                    c.UnitComponent = planeangleunit;
+                });
+
+
+
+                //define DimensionalExponents 
+                IfcDimensionalExponents DimensionalExponents = model.Instances.New<IfcDimensionalExponents>(c =>
+                {
+                    c.LengthExponent = 0;
+                    c.LengthExponent = 0;
+                    c.MassExponent = 0;
+                    c.TimeExponent = 0;
+                    c.ElectricCurrentExponent = 0;
+                    c.ThermodynamicTemperatureExponent = 0;
+                    c.AmountOfSubstanceExponent = 0;
+                    c.LuminousIntensityExponent = 0;
+                });
+
+
+                //define   ConversionBasedUnit to hold the two above 
+                IfcConversionBasedUnit ConversionBasedUnit = model.Instances.New<IfcConversionBasedUnit>(c =>
+                {
+                    c.Dimensions = DimensionalExponents;
+                    c.ConversionFactor = MeasureWithUnit;
+                    c.UnitType = IfcUnitEnum.PLANEANGLEUNIT;
+                    c.Name = new IfcLabel("DEGREE");
+                });
+
+
+                //Define UnitAssignment
+                IfcUnitAssignment UnitAssignment = model.Instances.New<IfcUnitAssignment>();
+                UnitAssignment.Units.Add(LenghtUnit);
+                UnitAssignment.Units.Add(AreaUnit);
+                UnitAssignment.Units.Add(VolumeUnit);
+                UnitAssignment.Units.Add(ConversionBasedUnit);
+                UnitAssignment.Units.Add(mass);
+                UnitAssignment.Units.Add(time);
+                UnitAssignment.Units.Add(thermo);
+                UnitAssignment.Units.Add(lamin);
+                UnitAssignment.Units.Add(solidangleunit);
+
+                tr.Commit();
+
+
+                return UnitAssignment;
+
+            }
+
+        }
+
+
+        public static IfcProject CreateProject(IfcStore model, 
+            IfcGeometricRepresentationContext SketchGeometricRepresentationContext,
+            IfcGeometricRepresentationContext GeometricRepresentationContext, IfcUnitAssignment UnitAssignment,
+            IfcAxis2Placement3D Axis2Placement3DOfOrigin)
+        {
+            using (var tr = model.BeginTransaction("Create Project"))
+            {
+                IfcProject Project = model.Instances.New<IfcProject>(p =>
+                {
+                    p.UnitsInContext = UnitAssignment;
+                    p.Name = "Default Project";
+                    p.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    p.RepresentationContexts.Add(GeometricRepresentationContext);
+                    p.RepresentationContexts.Add(SketchGeometricRepresentationContext);
+                });
+                tr.Commit();
+                return Project;
+            }
+
+        }
+
+        public static IfcSite CreateSite(IfcStore model, IfcAxis2Placement3D Axis2Placement3DOfOrigin,
+            List<long> longitudes, List<long> latitudes)
+        {
+            using (var tr = model.BeginTransaction("Create Site"))
+            {
+                IfcSite Site = model.Instances.New<IfcSite>(s =>
+                {
+                    s.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    s.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c => c.RelativePlacement = Axis2Placement3DOfOrigin);
+                    s.Name = "Default Site";
+                    s.CompositionType = IfcElementCompositionEnum.ELEMENT;
+                    s.RefLatitude = new IfcCompoundPlaneAngleMeasure(latitudes);
+                    s.RefLongitude = new IfcCompoundPlaneAngleMeasure(longitudes);
+                });
+                tr.Commit();
+                return Site;
+            }
+
+        }
+
+
+        public static IfcBuilding CreateBuilding(IfcStore model, IfcSite Site, 
+            IfcAxis2Placement3D Axis2Placement3DOfOrigin)
+        {
+            using (var tr = model.BeginTransaction("Create Building"))
+            {
+                IfcBuilding Building = model.Instances.New<IfcBuilding>(B =>
+                {
+                    B.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    B.Name = "Default Building";
+                    B.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(p =>
+                    {
+                        p.PlacementRelTo = Site.ObjectPlacement;
+                        p.RelativePlacement = Axis2Placement3DOfOrigin;
+                    });
+                    B.CompositionType = IfcElementCompositionEnum.ELEMENT;
+
+                });
+                tr.Commit();
+                return Building;
+
+            }
+        }
+
+        public static IfcBuildingStorey CreateBuildingStorey(IfcStore model, 
+            IfcBuilding Building,
+            IfcCartesianPoint Origin, IfcDirection xDir, IfcDirection zDir)
+
+        {
+            using (var tr = model.BeginTransaction("Create Building Storey"))
+            {
+                IfcBuildingStorey BuildingStorey = model.Instances.New<IfcBuildingStorey>(bs =>
+                {
+                    bs.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    bs.Name = "Ifc_Storey";
+                    bs.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = Building.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(d =>
+                        {
+                            d.Location = Origin;
+                            d.Axis = zDir;
+                            d.RefDirection = xDir;
+                        });
+                    });
+                    bs.CompositionType = IfcElementCompositionEnum.ELEMENT;
+                    bs.Elevation = 0;
+                });
+                tr.Commit();
+                return BuildingStorey;
+            }
+
+        }
+
+
+      public static IfcBeam CraeteMainGirder(IfcStore model ,
+          string name , double x  ,double y ,double z, double span,double Hcol,
+          double OverallDepth , double OverallWidth , double WebThickness ,
+          double FlangeThickness ,  double FilletRadius,
+          IfcBuildingStorey BuildingStorey , 
+          IfcProject project ,IfcDirection xDir , IfcDirection yDir , 
+          IfcDirection zDir ,IfcCartesianPoint Origin)
+        {
+            IfcBeam result; 
+            using (var tr =model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            t.Axis = xDir;
+                            t.RefDirection = yDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+                                    //changed from 0 0 0 
+                                    d.Axis = zDir;
+                                    //changed from 0 0 0 
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span - Hcol;
+                                e.SweptArea = model.Instances.New<IfcIShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0,  0));
+                                    });
+                                    s.OverallDepth = OverallDepth;
+                                    s.OverallWidth = OverallWidth;
+                                    s.WebThickness = WebThickness;
+                                    s.FlangeThickness = FlangeThickness;
+                                    s.FilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+            
+             
+        }
+
+
+     
+
+
+
+   
+        //
+        public static IfcBeam CraeteSecondaryBeam(IfcStore model,
+      string name, double x, double y, double z, double span,
+      double OverallDepth, double OverallWidth, double WebThickness,
+      double FlangeThickness, double FilletRadius,
+      IfcBuildingStorey BuildingStorey,
+      IfcProject project, IfcDirection xDir, IfcDirection yDir, 
+      IfcDirection zDir, IfcCartesianPoint Origin)
+        {
+            IfcBeam result;
+            using (var tr = model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            //x to y
+                            t.Axis = yDir;
+                            //y to x
+
+                            t.RefDirection = xDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+                                    //changed from 0 0 0 
+                                    d.Axis = zDir;
+                                    //changed from 0 0 0 
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span ;
+                                e.SweptArea = model.Instances.New<IfcIShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0, 0));
+                                    });
+                                    s.OverallDepth = OverallDepth;
+                                    s.OverallWidth = OverallWidth;
+                                    s.WebThickness = WebThickness;
+                                    s.FlangeThickness = FlangeThickness;
+                                    s.FilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+        public static IfcBeam CraeteSecondaryBeamCCHannel(IfcStore model,
+ string name, double x, double y, double z, double span,
+ double OverallDepth, double OverallWidth, double WebThickness,
+ double FlangeThickness, double FilletRadius,
+ IfcBuildingStorey BuildingStorey,
+ IfcProject project, IfcDirection xDir, IfcDirection yDir,
+ IfcDirection zDir, IfcCartesianPoint Origin , IfcDirection RefDirection)
+        {
+            IfcBeam result;
+            using (var tr = model.BeginTransaction("Create beam"))
+            {
+
+                result = model.Instances.New<IfcBeam>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            //x to y
+                            t.Axis = yDir;
+                            //y to x
+
+                            t.RefDirection = RefDirection;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+                                    //changed from 0 0 0 
+                                    d.Axis = zDir;
+                                    //changed from 0 0 0 
+
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir;
+                                e.Depth = span;
+                                e.SweptArea = model.Instances.New<IfcCShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0, 0));
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(0, 0));
+                                    });
+                                    s.Depth = OverallDepth;
+                                    s.Width = OverallWidth;
+                                    s.WallThickness = WebThickness;
+                                    s.Girth = FlangeThickness;
+                                    s.InternalFilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim = 0;
+                                f.YDim = 0;
+                                f.ZDim = 0;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+        public static IfcColumn CraeteColumn(IfcStore model, 
+            string name, double x , double y, double z ,double hegiht,
+               double OverallDepth, double OverallWidth, double WebThickness,
+          double FlangeThickness, double FilletRadius,
+            IfcBuildingStorey BuildingStorey, 
+          IfcProject project , IfcDirection xDir ,IfcDirection yDir ,
+          IfcDirection zDir ,IfcCartesianPoint Origin )
+        {
+            IfcColumn result;
+            using (var tr = model.BeginTransaction("Create column"))
+            {
+
+                result = model.Instances.New<IfcColumn>(b =>
+                {
+                    b.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    b.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(c =>
+                    {
+                        c.PlacementRelTo = BuildingStorey.ObjectPlacement;
+                        c.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(t =>
+                        {
+                            t.Location = model.Instances.New<IfcCartesianPoint>(p => p.SetXYZ(x, y, z));
+                            t.Axis = zDir;
+                            t.RefDirection = yDir;
+                        });
+                    });
+                    b.Name = name;
+                    b.Representation = model.Instances.New<IfcProductDefinitionShape>(p =>
+                    {
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r =>
+                        {
+                            r.RepresentationIdentifier = new IfcLabel("Body");
+                            r.ContextOfItems = project.RepresentationContexts[0];
+                            r.RepresentationType = new IfcLabel("SweptSolid");
+                            r.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(e =>
+                            {
+                                e.Position = model.Instances.New<IfcAxis2Placement3D>(d =>
+                                {
+                                    d.Location = Origin;
+                                    d.Axis = zDir;
+                                    d.RefDirection = xDir;
+                                });
+                                e.ExtrudedDirection = zDir; 
+                                e.Depth = hegiht;
+                                e.SweptArea = model.Instances.New<IfcIShapeProfileDef>(s =>
+                                {
+                                    s.ProfileType = IfcProfileTypeEnum.AREA;
+                                    s.Position = model.Instances.New<IfcAxis2Placement2D>(d =>
+                                    {
+                                        d.Location = model.Instances.New<IfcCartesianPoint>(l => l.SetXY(0,  0));
+                                        d.RefDirection = model.Instances.New<IfcDirection>(m => m.SetXY(1,  0));
+                                    });
+                                    s.OverallDepth = OverallDepth;
+                                    s.OverallWidth = OverallWidth;
+                                    s.WebThickness = WebThickness;
+                                    s.FlangeThickness = FlangeThickness;
+                                    s.FilletRadius = FilletRadius;
+                                });
+                            }));
+                        }));
+                        p.Representations.Add(model.Instances.New<IfcShapeRepresentation>(c =>
+                        {
+                            c.ContextOfItems = project.RepresentationContexts[1];
+                            c.RepresentationType = new IfcLabel("BoundingBox");
+                            c.RepresentationIdentifier = new IfcLabel("IAI");
+                            c.Items.Add(model.Instances.New<IfcBoundingBox>(f =>
+                            {
+                                f.Corner = model.Instances.New<IfcCartesianPoint>(po => po.SetXYZ(0, 0, 0));
+                                f.XDim =OverallWidth;
+                                f.YDim = OverallDepth ;
+                                f.ZDim = hegiht;
+                            }));
+                        }));
+                    });
+                });
+                tr.Commit();
+            }
+            return result;
+
+
+
+        }
+
+
+        public static IfcSlab CreateSlab (IfcStore model  ,string name  ,
+            double x, double y,double z,double xDim,double yDim ,double depth,
+            IfcBuildingStorey buildingStory, IfcProject project, IfcCartesianPoint Origin ,
+            IfcDirection xDir , IfcDirection yDir , IfcDirection zDir)
+        {
+            IfcSlab result;
+            using (var tr = model.BeginTransaction("Create Slab"))
+            {
+               result =  model.Instances.New<IfcSlab>(c=> 
+               {
+                   c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                   c.ObjectPlacement = model.Instances.New<IfcLocalPlacement>(s=> 
+                   {
+                       s.PlacementRelTo = buildingStory.ObjectPlacement;
+                       s.RelativePlacement = model.Instances.New<IfcAxis2Placement3D>(d=> 
+                       {
+                           d.Location = model.Instances.New<IfcCartesianPoint>(p=>p.SetXYZ(x,y,z));
+                           d.Axis = zDir ;
+                           d.RefDirection =model.Instances.New<IfcDirection>(t=>t.SetXYZ(0,-1,0));
+                       });
+                   });
+                   c.Name = name;
+                   c.PredefinedType = IfcSlabTypeEnum.FLOOR;
+                   c.Representation = model.Instances.New<IfcProductDefinitionShape>(s=> 
+                   {
+                       s.Representations.Add(model.Instances.New<IfcShapeRepresentation>(f=> 
+                       {
+                           f.ContextOfItems = project.RepresentationContexts[0];
+                           f.RepresentationIdentifier = new IfcLabel("Body");
+                           f.RepresentationType = new IfcLabel("SweptSolid");
+                           f.Items.Add(model.Instances.New<IfcExtrudedAreaSolid>(w=> 
+                           {
+                               w.SweptArea =model.Instances.New< IfcArbitraryClosedProfileDef>(p=> 
+                               {
+                                   p.ProfileType = IfcProfileTypeEnum.AREA;
+                                   p.OuterCurve = model.Instances.New<IfcPolyline>(l=> 
+                                   {
+                                       l.Points.Add(model.Instances.New<IfcCartesianPoint>(o=>o.SetXY(0,0)));
+                                       l.Points.Add(model.Instances.New<IfcCartesianPoint>(o=>o.SetXY(xDim,0)));
+                                       l.Points.Add(model.Instances.New<IfcCartesianPoint>(o=>o.SetXY(xDim,yDim)));
+                                       l.Points.Add(model.Instances.New<IfcCartesianPoint>(o=>o.SetXY(0,yDim)));
+                                       l.Points.Add(model.Instances.New<IfcCartesianPoint>(o=>o.SetXY(0,0)));
+
+                                   });
+                               });
+                               w.Position = model.Instances.New< IfcAxis2Placement3D>(a=> 
+                               {
+                                   a.Location = Origin;
+                                   a.Axis = zDir;
+                                   a.RefDirection =xDir;
+                               });
+                               w.ExtrudedDirection = zDir;
+                               w.Depth = depth;
+                           }));
+                       }));
+                       s.Representations.Add(model.Instances.New<IfcShapeRepresentation>(r=> 
+                       {
+                           r.ContextOfItems = project.RepresentationContexts[1];
+                           r.RepresentationIdentifier = new IfcLabel("IAI");
+                           r.RepresentationType = new IfcLabel("BoundingBox");
+                           r.Items.Add(model.Instances.New<IfcBoundingBox>(e=> 
+                           {
+                               e.Corner = Origin;
+                               e.XDim = xDim;
+                               e.YDim = yDim;
+                               e.ZDim = depth;
+                           }));
+                       }));
+                   });
+               });
+                tr.Commit();
+            }
+            return result;
+        }
+
+        public static void CreateAndAssignMaterialForColumnsAndBeams(List<IfcBuildingElement> Elements,
+            IfcStore model)
+        {
+
+            using (var tr = model.BeginTransaction("Create And Assign Material to beam"))
+            {
+                IfcMaterial Material = model.Instances.New<IfcMaterial>(m => m.Name = "50%");
+                IfcRelAssociatesMaterial RelAssociatesMaterial = model.Instances.New<IfcRelAssociatesMaterial>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.RelatingMaterial = Material;
+                });
+
+                //Define some single value properties 
+                IfcPropertySingleValue PropertySingleValue01 = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Layername");
+                    c.NominalValue = new IfcLabel("Furniture");
+                });
+
+                IfcPropertySingleValue PropertySingleValue02 = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Red");
+                    c.NominalValue = new IfcInteger(2);
+                });
+
+                IfcPropertySingleValue PropertySingleValue03 = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Green");
+                    c.NominalValue = new IfcInteger(157);
+                });
+
+                IfcPropertySingleValue PropertySingleValue04 = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Blue");
+                    c.NominalValue = new IfcInteger(33);
+                });
+
+                IfcComplexProperty ComplexProperty = model.Instances.New<IfcComplexProperty>(c =>
+                {
+                    c.Name = new IfcIdentifier("Color");
+                    c.UsageName = new IfcIdentifier("Color");
+                    c.HasProperties.Add(PropertySingleValue02);
+                    c.HasProperties.Add(PropertySingleValue03);
+                    c.HasProperties.Add(PropertySingleValue04);
+
+                });
+
+                IfcPropertySet PropertySet = model.Instances.New<IfcPropertySet>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.HasProperties.Add(ComplexProperty);
+                    c.HasProperties.Add(PropertySingleValue01);
+                    c.Name = new IfcLabel("PSet_Draughting");
+                });
+
+
+                IfcRelDefinesByProperties RelDefinesByProperties = model.Instances.New<IfcRelDefinesByProperties>(c =>
+                {
+                    c.RelatingPropertyDefinition = PropertySet;
+                });
+
+
+                foreach (IfcBuildingElement item in Elements)
+                {
+                    RelAssociatesMaterial.RelatedObjects.Add(item);
+                    RelDefinesByProperties.RelatedObjects.Add(item);
+                }
+
+                tr.Commit();
+            }
+
+
+        }
+
+        public static void AssignMaterialToSlabs(IfcStore model,
+            List<IfcSlab> slabs, IfcDirection xDir,
+          IfcDirection zDir, IfcCartesianPoint Origin)
+        {
+            using (var tr = model.BeginTransaction("Assign Material To Slab"))
+            {
+                IfcAxis2Placement3D a2p = model.Instances.New<IfcAxis2Placement3D>(c =>
+                {
+                    c.Location = Origin;
+                    c.Axis = zDir;
+                    c.RefDirection = xDir;
+                });
+
+                IfcMaterial concrete = model.Instances.New<IfcMaterial>(m => { m.Name = new IfcLabel("Structural Concrete"); });
+                IfcMaterialLayer layer = model.Instances.New<IfcMaterialLayer>(m =>
+                {
+                    m.Material = concrete;
+                    m.LayerThickness = 800;
+                });
+
+                IfcMaterialLayerSet MaterialLayerSet = model.Instances.New<IfcMaterialLayerSet>(c =>
+                {
+                    c.MaterialLayers.Add(layer);
+                    c.LayerSetName = new IfcLabel("Structural Concrete");
+                });
+
+                IfcMaterialLayerSetUsage Usage = model.Instances.New<IfcMaterialLayerSetUsage>(c =>
+                {
+                    c.ForLayerSet = MaterialLayerSet;
+                    c.LayerSetDirection = IfcLayerSetDirectionEnum.AXIS3;
+                    c.DirectionSense = IfcDirectionSenseEnum.NEGATIVE;
+                    c.OffsetFromReferenceLine = new IfcLengthMeasure(800);
+
+                });
+
+                IfcRelAssociatesMaterial RelAssociatesMaterial = model.Instances.New<IfcRelAssociatesMaterial>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+
+                    c.RelatingMaterial = Usage;
+                });
+
+                IfcPropertySingleValue PropertySingleValue01 = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Layername");
+                    c.NominalValue = new IfcLabel("Floors");
+
+                });
+
+
+                IfcPropertySingleValue Red = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Red");
+                    c.NominalValue = new IfcInteger(204);
+
+                });
+
+                IfcPropertySingleValue Green = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Green");
+                    c.NominalValue = new IfcInteger(101);
+
+                });
+
+                IfcPropertySingleValue Blue = model.Instances.New<IfcPropertySingleValue>(c =>
+                {
+                    c.Name = new IfcIdentifier("Blue");
+                    c.NominalValue = new IfcInteger(0);
+
+                });
+
+                IfcComplexProperty IfcComplexProperty = model.Instances.New<IfcComplexProperty>(c =>
+                {
+                    c.Name = new IfcIdentifier("Color");
+                    c.UsageName = new IfcIdentifier("Color");
+                    c.HasProperties.Add(Red);
+                    c.HasProperties.Add(Green);
+                    c.HasProperties.Add(Blue);
+                });
+
+                IfcPropertySet IfcPropertySet = model.Instances.New<IfcPropertySet>(ps =>
+                {
+                    ps.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    ps.Name = new IfcLabel("PSet_Draughting");
+                    ps.HasProperties.Add(IfcComplexProperty);
+                    ps.HasProperties.Add(PropertySingleValue01);
+                });
+
+                IfcRelDefinesByProperties IfcRelDefinesByProperties = model.Instances.New<IfcRelDefinesByProperties>(r =>
+                {
+                    r.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    r.RelatingPropertyDefinition = IfcPropertySet;
+
+                });
+                foreach (IfcSlab item in slabs)
+                {
+                    RelAssociatesMaterial.RelatedObjects.Add(item);
+                    IfcRelDefinesByProperties.RelatedObjects.Add(item);
+                }
+
+                tr.Commit();
+
+            }
+
+        }
+
+
+        public static void AssignIfcRelContainedInSpatialStructureForBuildingElement(IfcStore model,
+          List<IfcBuildingElement> Eelements, IfcBuildingStorey BuildingStorey,
+         IfcBuilding Building, IfcSite Site, IfcProject Project)
+
+        {
+            using (var tr = model.BeginTransaction("AssignIfcRelContainedInSpatialStructure "))
+            {
+                IfcRelContainedInSpatialStructure RelContainedInSpatialStructure = model.Instances.New<IfcRelContainedInSpatialStructure>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.Name = new IfcLabel("BuildingStoreyContainer");
+                    c.Description = new IfcText("BuildingStoreyContainer for Building Elements");
+
+                    c.RelatingStructure = BuildingStorey;
+                });
+
+                IfcRelAggregates RelAggregates01 = model.Instances.New<IfcRelAggregates>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.Name = new IfcLabel("BuildingContainer");
+                    c.Description = new IfcText("BuildingContainer for BuildigStories");
+                    c.RelatingObject = Building;
+                    c.RelatedObjects.Add(BuildingStorey);
+                });
+
+                IfcRelAggregates RelAggregates02 = model.Instances.New<IfcRelAggregates>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.Name = new IfcLabel("SiteContainer");
+                    c.Description = new IfcText("SiteContainer For Buildings");
+                    c.RelatedObjects.Add(Building);
+                    c.RelatingObject = Site;
+                });
+
+
+                IfcRelAggregates RelAggregates03 = model.Instances.New<IfcRelAggregates>(c =>
+                {
+                    c.GlobalId = new Xbim.Ifc4.UtilityResource.IfcGloballyUniqueId();
+                    c.Name = new IfcLabel("ProjectContainer");
+                    c.Description = new IfcText("ProjectContainer for Sites");
+                    c.RelatedObjects.Add(Site);
+                    c.RelatingObject = Project;
+                });
+                foreach (IfcBuildingElement item in Eelements)
+                {
+                    RelContainedInSpatialStructure.RelatedElements.Add(item);
+
+                }
+                tr.Commit();
+            }
+        }
+
+
+    }
+
+}
+
